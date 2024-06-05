@@ -1,90 +1,221 @@
-import random
 import numpy as np
+import networkx as nx
+import random
 import matplotlib.pyplot as plt
-from VRPGraph import VRPGraph  # Ensure the correct module name here
+from typing import List, Tuple
 
-class GeneticAlgorithmVRP:
-    def __init__(self, vrp_graph: VRPGraph, population_size: int = 100, generations: int = 500, mutation_rate: float = 0.01):
-        self.vrp_graph = vrp_graph
+from VRPGraph import VRPGraph
+
+
+class GeneticAlgorithmCVRP:
+    def __init__(self, graph: VRPGraph, population_size: int, num_generations: int, mutation_rate: float,
+                 vehicle_capacity: float):
+        self.graph = graph
         self.population_size = population_size
-        self.generations = generations
+        self.num_generations = num_generations
         self.mutation_rate = mutation_rate
+        self.vehicle_capacity = vehicle_capacity
+        self.depot = 0
+
+        # Initialize population
         self.population = self.initialize_population()
 
-    def initialize_population(self):
-        """Initialize population with random routes"""
+    def initialize_population(self) -> List[List[int]]:
         population = []
         for _ in range(self.population_size):
-            route = np.random.permutation(self.vrp_graph.num_nodes)
+            route = list(range(1, self.graph.num_nodes))
+            random.shuffle(route)
             population.append(route)
         return population
 
-    def fitness(self, route):
-        """Calculate the fitness of a route based on total distance and demand"""
-        total_distance = 0
-        total_demand = 0
-        for i in range(len(route) - 1):
-            total_distance += self.vrp_graph.euclid_distance(route[i], route[i + 1])
-            total_demand += self.vrp_graph.graph.nodes[route[i]]["demand"]
-        total_demand += self.vrp_graph.graph.nodes[route[-1]]["demand"]
-        return total_distance, total_demand
+    def fitness(self, individual: List[int]) -> float:
+        total_distance = 0.0
+        vehicle_load = 0.0
+        previous_node = self.depot
 
-    def select(self):
-        """Select parents for crossover using tournament selection"""
-        selected = random.choices(self.population, k=2)
-        return selected[0] if self.fitness(selected[0])[0] < self.fitness(selected[1])[0] else selected[1]
+        for node in individual:
+            demand = self.graph.graph.nodes[node]['demand'][0]
+            if vehicle_load + demand > self.vehicle_capacity:
+                total_distance += self.graph.euclid_distance(previous_node, self.depot)
+                previous_node = self.depot
+                vehicle_load = 0.0
 
-    def crossover(self, parent1, parent2):
-        """Perform ordered crossover"""
-        start, end = sorted(random.sample(range(self.vrp_graph.num_nodes), 2))
-        child = [-1] * self.vrp_graph.num_nodes
+            total_distance += self.graph.euclid_distance(previous_node, node)
+            vehicle_load += demand
+            previous_node = node
+
+        total_distance += self.graph.euclid_distance(previous_node, self.depot)
+        return total_distance
+
+    def select(self) -> List[int]:
+        tournament_size = 5
+        selected = random.sample(self.population, tournament_size)
+        selected.sort(key=lambda ind: self.fitness(ind))
+        return selected[0]
+
+    def crossover(self, parent1: List[int], parent2: List[int]) -> List[int]:
+        size = len(parent1)
+        child = [-1] * size
+
+        start, end = sorted(random.sample(range(size), 2))
         child[start:end] = parent1[start:end]
+
         pointer = end
         for node in parent2:
             if node not in child:
-                if pointer >= len(child):
+                if pointer >= size:
                     pointer = 0
+                while child[pointer] != -1:
+                    pointer += 1
+                    if pointer >= size:
+                        pointer = 0
                 child[pointer] = node
-                pointer += 1
+
         return child
 
-    def mutate(self, route):
-        """Perform swap mutation"""
+    def mutate(self, individual: List[int]) -> List[int]:
         if random.random() < self.mutation_rate:
-            i, j = random.sample(range(len(route)), 2)
-            route[i], route[j] = route[j], route[i]
-        return route
+            i, j = random.sample(range(len(individual)), 2)
+            individual[i], individual[j] = individual[j], individual[i]
+        return individual
 
     def evolve(self):
-        """Evolve the population through generations"""
-        for generation in range(self.generations):
-            new_population = []
-            for _ in range(self.population_size):
-                parent1 = self.select()
-                parent2 = self.select()
-                child = self.crossover(parent1, parent2)
-                child = self.mutate(child)
-                new_population.append(child)
-            self.population = new_population
-            best_route = min(self.population, key=self.fitness)
-            print(f"Generation {generation} | Best fitness: {self.fitness(best_route)[0]}")
+        new_population = []
+        for _ in range(self.population_size):
+            parent1 = self.select()
+            parent2 = self.select()
+            child = self.crossover(parent1, parent2)
+            child = self.mutate(child)
+            new_population.append(child)
+        self.population = new_population
 
-        best_route = min(self.population, key=self.fitness)
-        return best_route, self.fitness(best_route)
+    def run(self) -> Tuple[List[int], float]:
+        best_fitness = float('inf')
+        best_route = None
 
-# Example usage
-vrp_graph = VRPGraph(num_nodes=20, num_depots=1, plot_demand=True)  # Adjust num_depots if necessary
-ga_vrp = GeneticAlgorithmVRP(vrp_graph)
-best_route, best_fitness = ga_vrp.evolve()
+        for generation in range(self.num_generations):
+            self.evolve()
+            current_best_individual = min(self.population, key=lambda ind: self.fitness(ind))
+            current_best_fitness = self.fitness(current_best_individual)
 
-total_distance, total_demand = best_fitness
-print(f"Best route: {best_route}")
-print(f"Total distance: {total_distance}")
-print(f"Total demand satisfied: {total_demand}")
+            if current_best_fitness < best_fitness:
+                best_fitness = current_best_fitness
+                best_route = self.build_complete_route(current_best_individual)
 
-# Optional: Plotting the final solution
-fig, ax = plt.subplots(figsize=(10, 6))
-for i in range(len(best_route) - 1):
-    vrp_graph.visit_edge(best_route[i], best_route[i + 1])
-vrp_graph.draw(ax)
-plt.show()
+            print(f"Generation {generation + 1}/{self.num_generations} completed - Best Fitness: {best_fitness}")
+
+        return best_route, best_fitness
+
+    def build_complete_route(self, individual: List[int]) -> List[int]:
+        complete_route = []
+        current_route = []
+        vehicle_load = 0.0
+
+        for node in individual:
+            demand = self.graph.graph.nodes[node]['demand'][0]
+            if vehicle_load + demand > self.vehicle_capacity:
+                complete_route.append(0)  # Return to depot
+                complete_route.extend(current_route)
+                complete_route.append(0)  # Start new route from depot
+                current_route = []
+                vehicle_load = 0.0
+
+            current_route.append(node)
+            vehicle_load += demand
+
+        if current_route:
+            complete_route.append(0)  # Return to depot
+            complete_route.extend(current_route)
+            complete_route.append(0)  # End at depot
+
+        return complete_route
+
+    def plot_route(self, best_route: List[int]):
+        pos = nx.get_node_attributes(self.graph.graph, "coordinates")
+        plt.figure(figsize=(10, 6))
+        ax = plt.gca()
+
+        self.graph.set_default_node_attributes()
+        self.graph.draw(ax)
+
+        # Define colors for different routes
+        colors = ['red', 'blue', 'green', 'purple', 'orange', 'brown', 'pink', 'gray', 'olive', 'cyan']
+        color_idx = 0
+
+        # Plot the best route with different colors for each sub-route
+        sub_route = []
+        for i in range(1, len(best_route)):
+            if best_route[i] == 0:
+                # Draw sub-route
+                for j in range(len(sub_route) - 1):
+                    nx.draw_networkx_edges(
+                        self.graph.graph,
+                        pos,
+                        edgelist=[(sub_route[j], sub_route[j + 1])],
+                        edge_color=colors[color_idx % len(colors)],
+                        ax=ax,
+                        width=2.0,
+                    )
+                if sub_route:
+                    nx.draw_networkx_edges(
+                        self.graph.graph,
+                        pos,
+                        edgelist=[(0, sub_route[0]), (sub_route[-1], 0)],
+                        edge_color=colors[color_idx % len(colors)],
+                        ax=ax,
+                        width=2.0,
+                    )
+                sub_route = []
+                color_idx += 1
+            else:
+                sub_route.append(best_route[i])
+
+        # Draw the last sub-route if exists
+        if sub_route:
+            for j in range(len(sub_route) - 1):
+                nx.draw_networkx_edges(
+                    self.graph.graph,
+                    pos,
+                    edgelist=[(sub_route[j], sub_route[j + 1])],
+                    edge_color=colors[color_idx % len(colors)],
+                    ax=ax,
+                    width=2.0,
+                )
+            if sub_route:
+                nx.draw_networkx_edges(
+                    self.graph.graph,
+                    pos,
+                    edgelist=[(0, sub_route[0]), (sub_route[-1], 0)],
+                    edge_color=colors[color_idx % len(colors)],
+                    ax=ax,
+                    width=2.0,
+                )
+
+        self.graph.draw(ax)
+        plt.title('Best Route Found by Genetic Algorithm')
+        plt.show()
+
+
+# Example usage:
+num_nodes = 20
+num_depots = 1
+plot_demand = False
+
+# Create VRP graph
+graph = VRPGraph(num_nodes, num_depots, plot_demand)
+
+# Genetic algorithm parameters
+population_size = 100
+num_generations = 500
+mutation_rate = 0.02
+vehicle_capacity = 1.0  # Vehicle capacity is 1
+
+# Run genetic algorithm
+ga = GeneticAlgorithmCVRP(graph, population_size, num_generations, mutation_rate, vehicle_capacity)
+best_route, total_distance = ga.run()
+
+print("Best route:", best_route)
+print("Total distance:", total_distance)
+
+# Plot the best route
+ga.plot_route(best_route)
