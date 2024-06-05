@@ -191,6 +191,11 @@ class GeneticAlgorithmCVRP:
                     width=2.0,
                 )
 
+        # Draw the nodes with labels
+        node_labels = {node: str(node) for node in self.graph.graph.nodes()}
+        label_pos = {node: (pos[node][0], pos[node][1] + 0.03) for node in self.graph.graph.nodes()}
+        nx.draw_networkx_labels(self.graph.graph, label_pos, labels=node_labels, font_size=10, ax=ax)
+
         self.graph.draw(ax)
         plt.title('Best Route Found by Genetic Algorithm')
         plt.show()
